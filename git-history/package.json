@@ -1,0 +1,11 @@
+{
+  "name": "@memoryengine/git-history",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Backfill and incrementally sync git commits into memory engine",
+  "main": "git-history.ts",
+  "dependencies": {
+    "@memoryengine/client": "^0.2.8"
+  }
+}
