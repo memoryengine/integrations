@@ -1,0 +1,17 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "@memoryengine/gh-sync",
+      "dependencies": {
+        "@memoryengine/client": "^0.2.8",
+      },
+    },
+  },
+  "packages": {
+    "@memoryengine/client": ["@memoryengine/client@0.2.8", "", { "dependencies": { "zod": "^4.0.0" }, "peerDependencies": { "typescript": "^5.0.0" }, "optionalPeers": ["typescript"] }, "sha512-oMWfW+Z6w9BvwYnOQws+haoP0zxsI8kUzVeHij0/YUkEO9L/kUPcxnC5wfiVZtKd9pIGe8c/GwLYt2L5Ia9tZg=="],
+
+    "zod": ["zod@4.3.6", "", {}, "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="],
+  }
+}
