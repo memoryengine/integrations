@@ -37,10 +37,10 @@ bun run build        # produces ./me-git-history
 --api-key <key>          Override ME_API_KEY env var
 --repo <name>            Override auto-detected repo name (ltree-safe)
 --prefix <tree.path>     Tree prefix before <repo>.git_history
---depth metadata|files   Content depth (default: files)
+--depth <level>          Content depth: metadata|files|diff_summary|full_diff (default: files)
 --since <date>           Only commits after this ISO date
 --after <sha>            Only commits after this SHA
---max <n>                Max commits to process
+--max <n>                Max commits to process (default: 500)
 --branch <name>          Branch to log (default: current HEAD)
 --dry-run                Preview without creating memories
 ```
@@ -50,7 +50,7 @@ bun run build        # produces ./me-git-history
 1. **Detects the repo name** from `git remote get-url origin` (falls back to directory name)
 2. **Checks for a sync cursor** — a special memory that tracks the last imported commit
 3. **Fetches new commits** via `git log`, using `<last_sha>..HEAD` for incremental runs
-4. **Filters out** merge commits and empty subjects
+4. **Filters out** merge commits, empty subjects, lock-file-only commits, and commits with no changed files
 5. **Creates memories** in batches of 50 via `memory.batchCreate()`
 6. **Updates the sync cursor** after all batches succeed
 
@@ -75,7 +75,9 @@ Each commit is stored as a memory with this structure:
 
 **Temporal**: `{ "start": "<commit date ISO>" }`
 
-**Content** (at `files` depth):
+**Content** (varies by `--depth`):
+
+`files` (default):
 ```markdown
 # Add rate limiting middleware
 
@@ -87,6 +89,16 @@ Each commit is stored as a memory with this structure:
 - A	src/middleware/rate-limit.ts
 - M	src/server/routes.ts
 ```
+
+`diff_summary` adds a stats section:
+```markdown
+## Diff Summary
+ src/middleware/rate-limit.ts | 45 ++++++++++++++++++++++++
+ src/server/routes.ts        |  3 ++-
+ 2 files changed, 47 insertions(+), 1 deletion(-)
+```
+
+`full_diff` adds the complete patch output.
 
 ## Querying
 

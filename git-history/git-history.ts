@@ -14,7 +14,7 @@ import { createClient, type MeClient } from "@memoryengine/client";
 
 // ===== Types =====
 
-type Depth = "metadata" | "files";
+type Depth = "metadata" | "files" | "diff_summary" | "full_diff";
 
 interface Options {
   server: string;
@@ -88,6 +88,27 @@ function shaExists(sha: string): boolean {
 
 const IGNORE_PATTERNS = [/^Merge branch\b/, /^Merge pull request\b/, /^Merge remote-tracking\b/];
 
+const LOCK_FILE_PATTERNS = [
+  /package-lock\.json$/,
+  /yarn\.lock$/,
+  /bun\.lock$/,
+  /pnpm-lock\.yaml$/,
+  /Gemfile\.lock$/,
+  /Cargo\.lock$/,
+  /poetry\.lock$/,
+  /composer\.lock$/,
+];
+
+function isLockFileOnly(files: string[]): boolean {
+  return (
+    files.length > 0 &&
+    files.every((line) => {
+      const path = line.replace(/^[A-Z]\t/, "");
+      return LOCK_FILE_PATTERNS.some((p) => p.test(path));
+    })
+  );
+}
+
 function fetchCommits(opts: Options, range?: string): Commit[] {
   const args = ["log", "--format=%H%x00%ae%x00%aI%x00%s", "--reverse"];
 
@@ -141,24 +162,69 @@ function getCommitBody(sha: string): string {
   }
 }
 
+function isMergeCommit(sha: string): boolean {
+  try {
+    const parents = git("rev-parse", `${sha}^@`);
+    return parents.split("\n").length > 1;
+  } catch {
+    return false;
+  }
+}
+
+function getDiffStats(sha: string): string {
+  try {
+    const output = git("diff-tree", "--stat", sha);
+    const lines = output.split("\n");
+    return lines.length > 1 ? lines.slice(1).join("\n") : "";
+  } catch {
+    return "";
+  }
+}
+
+function getFullDiff(sha: string): string {
+  try {
+    const output = git("diff-tree", "-p", sha);
+    const lines = output.split("\n");
+    return lines.length > 1 ? lines.slice(1).join("\n") : "";
+  } catch {
+    return "";
+  }
+}
+
 // ===== Content Formatting =====
 
-function formatContent(commit: Commit, body: string, files: string[], depth: Depth): string {
+function formatContent(
+  commit: Commit,
+  body: string,
+  files: string[],
+  depth: Depth,
+  diffStats?: string,
+  fullDiff?: string,
+): string {
   const short = commit.sha.slice(0, 7);
   let content = `# ${commit.subject}\n\n`;
   content += `**Commit**: ${short}\n`;
   content += `**Author**: ${commit.author}\n`;
   content += `**Date**: ${commit.date}\n`;
 
-  if (body) {
-    content += `\n${body}\n`;
+  const trimmedBody = body.trim();
+  if (trimmedBody) {
+    content += `\n${trimmedBody}\n`;
   }
 
-  if (depth === "files" && files.length > 0) {
+  if (depth !== "metadata" && files.length > 0) {
     content += "\n## Files Changed\n";
     for (const f of files) {
       content += `- ${f}\n`;
     }
+  }
+
+  if (diffStats) {
+    content += "\n## Diff Summary\n```\n" + diffStats + "\n```\n";
+  }
+
+  if (fullDiff) {
+    content += "\n## Full Diff\n```diff\n" + fullDiff + "\n```\n";
   }
 
   return content;
@@ -224,10 +290,10 @@ Options:
   --api-key <key>          Override ME_API_KEY env var
   --repo <name>            Override auto-detected repo name (ltree-safe)
   --prefix <tree.path>     Tree prefix before <repo>.git_history
-  --depth metadata|files   Content depth (default: files)
+  --depth <level>          Content depth: metadata|files|diff_summary|full_diff (default: files)
   --since <date>           Only commits after this ISO date
   --after <sha>            Only commits after this SHA
-  --max <n>                Max commits to process
+  --max <n>                Max commits to process (default: 500)
   --branch <name>          Branch to log (default: current HEAD)
   --dry-run                Preview without creating memories
   -h, --help               Show this help`);
@@ -284,13 +350,9 @@ async function main(): Promise<void> {
   // 1. Parse args + env vars
   const cliOpts = parseArgs();
 
-  const server = cliOpts.server ?? process.env.ME_SERVER ?? "";
+  const server = cliOpts.server ?? process.env.ME_SERVER ?? "http://localhost:3000";
   const apiKey = cliOpts.apiKey ?? process.env.ME_API_KEY ?? "";
 
-  if (!server) {
-    console.error("Error: ME_SERVER not set. Use --server <url> or set ME_SERVER env var.");
-    process.exit(1);
-  }
   if (!apiKey) {
     console.error("Error: ME_API_KEY not set. Use --api-key <key> or set ME_API_KEY env var.");
     process.exit(1);
@@ -358,7 +420,7 @@ async function main(): Promise<void> {
     depth,
     since: sinceDate,
     after: cliOpts.after,
-    max: cliOpts.max,
+    max: cliOpts.max ?? 500,
     branch: cliOpts.branch,
     dryRun: cliOpts.dryRun ?? false,
   };
@@ -427,28 +489,53 @@ async function main(): Promise<void> {
   const BATCH_SIZE = 50;
   let created = 0;
   let errors = 0;
+  let enrichSkipped = 0;
 
   for (let i = 0; i < commitsToProcess.length; i += BATCH_SIZE) {
     const batch = commitsToProcess.slice(i, i + BATCH_SIZE);
 
-    const memories = batch.map((commit) => {
-      const body = getCommitBody(commit.sha);
-      const files = depth === "files" ? getChangedFiles(commit.sha) : [];
-      const content = formatContent(commit, body, files, depth);
+    const memories = batch
+      .map((commit) => {
+        const body = getCommitBody(commit.sha);
+        const files = depth !== "metadata" ? getChangedFiles(commit.sha) : [];
 
-      return {
-        content,
-        tree: treePath,
-        meta: {
-          source: "git" as const,
-          repo,
-          commit: commit.sha,
-          author: commit.author,
-          branch: branchRef,
-        },
-        temporal: { start: commit.date },
-      };
-    });
+        // Skip lock-file-only commits
+        if (isLockFileOnly(files)) {
+          enrichSkipped++;
+          return null;
+        }
+        // Skip empty commits when depth includes files
+        if (depth !== "metadata" && files.length === 0) {
+          enrichSkipped++;
+          return null;
+        }
+        // Skip merge commits (actual parent count check)
+        if (isMergeCommit(commit.sha)) {
+          enrichSkipped++;
+          return null;
+        }
+
+        const diffStats =
+          depth === "diff_summary" || depth === "full_diff" ? getDiffStats(commit.sha) : undefined;
+        const fullDiff = depth === "full_diff" ? getFullDiff(commit.sha) : undefined;
+        const content = formatContent(commit, body, files, depth, diffStats, fullDiff);
+
+        return {
+          content,
+          tree: treePath,
+          meta: {
+            source: "git" as const,
+            repo,
+            commit: commit.sha,
+            author: commit.author,
+            branch: branchRef,
+          },
+          temporal: { start: commit.date },
+        };
+      })
+      .filter((m): m is NonNullable<typeof m> => m !== null);
+
+    if (memories.length === 0) continue;
 
     try {
       const result = await client.memory.batchCreate({ memories });
@@ -456,7 +543,7 @@ async function main(): Promise<void> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Batch error (commits ${i + 1}-${i + batch.length}): ${msg}`);
-      errors += batch.length;
+      errors += memories.length;
     }
 
     if ((i + BATCH_SIZE) % 100 === 0 && i + BATCH_SIZE < commitsToProcess.length) {
@@ -477,7 +564,7 @@ async function main(): Promise<void> {
   }
 
   // 10. Report
-  const skipped = filtered + deduped;
+  const skipped = filtered + deduped + enrichSkipped;
   console.log(`Done: ${created} created, ${skipped} skipped, ${errors} errors`);
 }
 
