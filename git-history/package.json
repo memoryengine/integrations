@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Backfill and incrementally sync git commits into memory engine",
   "main": "git-history.ts",
+  "scripts": {
+    "build": "bun build --compile git-history.ts --outfile me-git-history"
+  },
   "dependencies": {
     "@memoryengine/client": "^0.2.8"
   }
