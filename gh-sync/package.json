@@ -1,0 +1,14 @@
+{
+  "name": "@memoryengine/gh-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sync GitHub issues, PRs, releases, and CI runs into memory engine",
+  "main": "gh-sync.ts",
+  "scripts": {
+    "build": "bun build --compile gh-sync.ts --outfile me-gh-sync"
+  },
+  "dependencies": {
+    "@memoryengine/client": "^0.2.8"
+  }
+}

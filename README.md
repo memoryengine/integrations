@@ -7,6 +7,7 @@ A collection of integrations that connect external data sources to [memory engin
 | Integration | Description |
 |-------------|-------------|
 | [git-history](./git-history/) | Backfill and incrementally sync git commits into searchable memories |
+| [gh-sync](./gh-sync/) | Sync GitHub issues, PRs, releases, and CI runs into searchable memories |
 
 ## Usage
 
